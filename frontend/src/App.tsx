@@ -1,33 +1,10 @@
-import { useMemo, useState, type FormEvent, type SVGProps } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type SVGProps } from 'react'
+import { Client } from '@stomp/stompjs'
+import { createRoom, fetchPublicLobby, type Room } from './api/rooms'
 import './App.css'
 
-type Room = {
-  code: string
-  name: string
-  players: number
-  language: string
-}
-
-const STARTING_ROOMS: Room[] = [
-  { code: 'QRRV', name: 'Masala Night', players: 22, language: 'English' },
-  { code: 'CHAI', name: "Ananya's room", players: 8, language: 'Hindi' },
-  { code: 'BLLY', name: 'Bollywood Bits', players: 14, language: 'English' },
-  { code: 'SPCE', name: 'Saturday Spice', players: 6, language: 'Hindi' },
-  { code: 'POPS', name: "Rohan's room", players: 11, language: 'English' },
-  { code: 'TAST', name: 'Pop till you drop', players: 4, language: 'English' },
-  { code: 'MNGL', name: "Guest4401's room", players: 2, language: 'Hindi' },
-  { code: 'KRNL', name: 'Desi Trivia Hour', players: 9, language: 'English' },
-  { code: 'WALA', name: 'Chaat & Chat', players: 7, language: 'Hindi' },
-]
-
-const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
-const PRIVATE_ROOM_COUNT = 37
-
-function randomCode() {
-  return Array.from(
-    { length: 4 },
-    () => LETTERS[Math.floor(Math.random() * LETTERS.length)],
-  ).join('')
+function upsertRoom(rooms: Room[], room: Room) {
+  return [room, ...rooms.filter((existing) => existing.code !== room.code)]
 }
 
 function App() {
@@ -38,10 +15,12 @@ function App() {
   const [isPublic, setIsPublic] = useState(true)
   const [joinCode, setJoinCode] = useState('')
   const [filter, setFilter] = useState('')
-  const [rooms, setRooms] = useState<Room[]>(STARTING_ROOMS)
+  const [rooms, setRooms] = useState<Room[]>([])
+  const [privateRoomCount, setPrivateRoomCount] = useState(0)
   const [notice, setNotice] = useState('')
   const [hotCode, setHotCode] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [creating, setCreating] = useState(false)
 
   const visibleRooms = useMemo(() => {
     const q = filter.trim().toLowerCase()
@@ -56,24 +35,61 @@ function App() {
 
   const playerCount = rooms.reduce((sum, room) => sum + room.players, 0)
 
-  function handleCreate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const name = roomName.trim() || `${guestName}'s room`
-    const code = randomCode()
+  async function loadLobby() {
+    const lobby = await fetchPublicLobby()
+    setRooms(lobby.rooms)
+    setPrivateRoomCount(lobby.privateRoomCount)
+  }
 
-    if (isPublic) {
-      setRooms((prev) => [
-        { code, name, players: 1, language: 'English' },
-        ...prev,
-      ])
+  useEffect(() => {
+    void loadLobby().catch(() => {
+      setNotice('Could not load rooms. Is the backend running?')
+    })
+
+    const client = new Client({
+      brokerURL: import.meta.env.VITE_WS_URL ?? 'ws://localhost:8080/ws',
+      reconnectDelay: 4000,
+      onConnect: () => {
+        client.subscribe('/topic/lobby', (message) => {
+          const room = JSON.parse(message.body) as Room
+          if (!room.isPublic) return
+          setRooms((prev) => upsertRoom(prev, room))
+        })
+      },
+    })
+    client.activate()
+
+    return () => {
+      void client.deactivate()
     }
+  }, [])
 
-    setHotCode(code)
-    setNotice(
-      isPublic
-        ? `Opened public room ${code}.`
-        : `Opened private room ${code}. Share that code with friends.`,
-    )
+  async function handleCreate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (creating) return
+
+    setCreating(true)
+    try {
+      const room = await createRoom({
+        name: roomName.trim() || `${guestName}'s room`,
+        isPublic,
+      })
+      setHotCode(room.code)
+      if (room.isPublic) {
+        setRooms((prev) => upsertRoom(prev, room))
+      } else {
+        setPrivateRoomCount((count) => count + 1)
+      }
+      setNotice(
+        room.isPublic
+          ? `Opened public room ${room.code}.`
+          : `Opened private room ${room.code}. Share that code with friends.`,
+      )
+    } catch {
+      setNotice('Could not create the room. Is the backend running?')
+    } finally {
+      setCreating(false)
+    }
   }
 
   function handleJoin(event: FormEvent<HTMLFormElement>) {
@@ -99,15 +115,15 @@ function App() {
     setNotice(`Joining ${room.name} (${room.code}).`)
   }
 
-  function handleRefresh() {
+  async function handleRefresh() {
     setRefreshing(true)
-    setRooms((prev) =>
-      prev.map((room) => ({
-        ...room,
-        players: Math.max(1, room.players + Math.floor(Math.random() * 5) - 2),
-      })),
-    )
-    window.setTimeout(() => setRefreshing(false), 450)
+    try {
+      await loadLobby()
+    } catch {
+      setNotice('Could not refresh rooms. Is the backend running?')
+    } finally {
+      window.setTimeout(() => setRefreshing(false), 450)
+    }
   }
 
   return (
@@ -173,8 +189,8 @@ function App() {
                   Private
                 </button>
               </div>
-              <button className="btn-play" type="submit">
-                Play
+              <button className="btn-play" type="submit" disabled={creating}>
+                {creating ? 'Opening…' : 'Play'}
               </button>
             </div>
           </form>
@@ -215,7 +231,7 @@ function App() {
         <div className="rooms-toolbar">
           <p className="rooms-stats">
             Play with {playerCount} players in {rooms.length} public rooms and{' '}
-            {PRIVATE_ROOM_COUNT} private rooms.
+            {privateRoomCount} private rooms.
           </p>
           <div className="rooms-tools">
             <input
@@ -237,7 +253,11 @@ function App() {
 
         <section className="room-grid" aria-label="Public rooms">
           {visibleRooms.length === 0 ? (
-            <p className="empty">No rooms match that filter.</p>
+            <p className="empty">
+              {filter.trim()
+                ? 'No rooms match that filter.'
+                : 'No public rooms yet. Start one above.'}
+            </p>
           ) : (
             visibleRooms.map((room) => (
               <button

@@ -280,6 +280,14 @@
   filter: brightness(1.05);
 }
 
+.btn-play:disabled,
+.btn-join:disabled {
+  opacity: 0.65;
+  cursor: wait;
+  filter: none;
+  transform: none;
+}
+
 .btn-play:active,
 .btn-join:active,
 .btn-refresh:active {

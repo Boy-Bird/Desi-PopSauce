@@ -4,7 +4,6 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.List;
 
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,11 +16,9 @@ public class RoomService {
 	private static final SecureRandom RANDOM = new SecureRandom();
 
 	private final RoomRepository roomRepository;
-	private final SimpMessagingTemplate messagingTemplate;
 
-	public RoomService(RoomRepository roomRepository, SimpMessagingTemplate messagingTemplate) {
+	public RoomService(RoomRepository roomRepository) {
 		this.roomRepository = roomRepository;
-		this.messagingTemplate = messagingTemplate;
 	}
 
 	@Transactional
@@ -35,11 +32,7 @@ public class RoomService {
 		room.setCreatedAt(Instant.now());
 
 		Room saved = roomRepository.save(room);
-		RoomResponse response = RoomResponse.from(saved);
-		if (saved.isPublicRoom()) {
-			messagingTemplate.convertAndSend("/topic/lobby", response);
-		}
-		return response;
+		return RoomResponse.from(saved);
 	}
 
 	@Transactional(readOnly = true)

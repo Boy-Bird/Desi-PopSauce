@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, type FormEvent, type SVGProps } from 'react'
-import { Client } from '@stomp/stompjs'
 import { createRoom, fetchPublicLobby, type Room } from './api/rooms'
 import './App.css'
 
@@ -45,23 +44,6 @@ function App() {
     void loadLobby().catch(() => {
       setNotice('Could not load rooms. Is the backend running?')
     })
-
-    const client = new Client({
-      brokerURL: import.meta.env.VITE_WS_URL ?? 'ws://localhost:8080/ws',
-      reconnectDelay: 4000,
-      onConnect: () => {
-        client.subscribe('/topic/lobby', (message) => {
-          const room = JSON.parse(message.body) as Room
-          if (!room.isPublic) return
-          setRooms((prev) => upsertRoom(prev, room))
-        })
-      },
-    })
-    client.activate()
-
-    return () => {
-      void client.deactivate()
-    }
   }, [])
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
